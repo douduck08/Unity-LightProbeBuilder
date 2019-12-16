@@ -14,16 +14,21 @@ public class LightProbeGroupBuilder : MonoBehaviour {
     static Color VolumeColor = new Color (1f, 0.9f, 0.25f);
     static Color BoundsColor = new Color (0.5f, 0.5f, 0.9f);
 
+#if UNITY_EDITOR
     [Header ("Volume")]
+    [SerializeField] bool generateWithGrids = true;
     [SerializeField] Vector3 offset;
     [SerializeField] Vector3 size;
     [SerializeField] Vector3Int density = new Vector3Int (2, 2, 2);
 
-    [Header ("Renderers")]
+    [Header ("Bounds")]
+    [SerializeField] bool generateWithBounds = true;
+    [SerializeField] bool useRendererBounds = true;
+    [SerializeField] bool useColliderBounds = false;
     [SerializeField] float boundsExtent = 0f;
 
-#if UNITY_EDITOR
     List<Renderer> renderersInVolume = new List<Renderer> ();
+    List<Collider> collidersInVolume = new List<Collider> ();
 
     public int currentProbeNumber {
         get {
@@ -37,6 +42,12 @@ public class LightProbeGroupBuilder : MonoBehaviour {
         }
     }
 
+    public int currentColliderNumber {
+        get {
+            return collidersInVolume.Count;
+        }
+    }
+
     List<Renderer> FindRenderersInVolume () {
         var renderersInScene = FindObjectsOfType<GameObject> ()
             .Where (go => (GameObjectUtility.GetStaticEditorFlags (go) & StaticEditorFlags.LightmapStatic) != 0)
@@ -44,16 +55,55 @@ public class LightProbeGroupBuilder : MonoBehaviour {
             .Where (r => r != null)
             .ToList ();
 
-        var renderersInVolume = new List<Renderer> ();
+        var volumeBounds = new Bounds (transform.position + offset, size);
+        var result = new List<Renderer> ();
         renderersInScene.ForEach (
             r => {
-                renderersInVolume.Add (r);
+                var bounds = r.bounds;
+                bounds.size = bounds.size + new Vector3 (boundsExtent, boundsExtent, boundsExtent) * 2f;
+                if (bounds.Intersects (volumeBounds)) {
+                    result.Add (r);
+                }
             }
         );
-        return renderersInVolume;
+        return result;
     }
 
-    List<Vector3> GetProbePositions (bool worldSpace = false) {
+    List<Collider> FindCollidersInVolume () {
+        var collidersInScene = FindObjectsOfType<GameObject> ()
+            .Where (go => (GameObjectUtility.GetStaticEditorFlags (go) & StaticEditorFlags.LightmapStatic) != 0)
+            .Select (go => go.GetComponent<Collider> ())
+            .Where (c => c != null)
+            .ToList ();
+
+        var volumeBounds = new Bounds (transform.position + offset, size);
+        var result = new List<Collider> ();
+        collidersInScene.ForEach (
+            c => {
+                var bounds = c.bounds;
+                bounds.size = bounds.size + new Vector3 (boundsExtent, boundsExtent, boundsExtent) * 2f;
+                if (bounds.Intersects (volumeBounds)) {
+                    result.Add (c);
+                }
+            }
+        );
+        return result;
+    }
+
+    void UpdateRendererListAndColliderList () {
+        if (useRendererBounds) {
+            renderersInVolume = FindRenderersInVolume ();
+        } else {
+            renderersInVolume.Clear ();
+        }
+        if (useColliderBounds) {
+            collidersInVolume = FindCollidersInVolume ();
+        } else {
+            collidersInVolume.Clear ();
+        }
+    }
+
+    List<Vector3> GetGridProbePositions (bool worldSpace = false) {
         var probePositions = new List<Vector3> ();
         if (density.x > 1 && density.y > 1 && density.z > 1) {
             var cellSize = new Vector3 (size.x / (density.x - 1), size.y / (density.y - 1), size.z / (density.z - 1));
@@ -72,33 +122,91 @@ public class LightProbeGroupBuilder : MonoBehaviour {
         return probePositions;
     }
 
+    List<Vector3> GetBoundsProbePositions () {
+        UpdateRendererListAndColliderList ();
+        var probePositions = new List<Vector3> ();
+        if (renderersInVolume != null) {
+            foreach (var renderer in renderersInVolume) {
+                var bounds = renderer.bounds;
+                var center = bounds.center;
+                var extents = bounds.extents + new Vector3 (boundsExtent, boundsExtent, boundsExtent);
+                probePositions.Add (center + new Vector3 (extents.x, extents.y, extents.z));
+                probePositions.Add (center + new Vector3 (-extents.x, -extents.y, extents.z));
+                probePositions.Add (center + new Vector3 (extents.x, -extents.y, extents.z));
+                probePositions.Add (center + new Vector3 (-extents.x, extents.y, extents.z));
+                probePositions.Add (center + new Vector3 (extents.x, extents.y, -extents.z));
+                probePositions.Add (center + new Vector3 (-extents.x, -extents.y, -extents.z));
+                probePositions.Add (center + new Vector3 (extents.x, -extents.y, -extents.z));
+                probePositions.Add (center + new Vector3 (-extents.x, extents.y, -extents.z));
+            }
+        }
+        if (collidersInVolume != null) {
+            foreach (var collider in collidersInVolume) {
+                var bounds = collider.bounds;
+                var center = bounds.center;
+                var extents = bounds.extents + new Vector3 (boundsExtent, boundsExtent, boundsExtent);
+                probePositions.Add (center + new Vector3 (extents.x, extents.y, extents.z));
+                probePositions.Add (center + new Vector3 (-extents.x, -extents.y, extents.z));
+                probePositions.Add (center + new Vector3 (extents.x, -extents.y, extents.z));
+                probePositions.Add (center + new Vector3 (-extents.x, extents.y, extents.z));
+                probePositions.Add (center + new Vector3 (extents.x, extents.y, -extents.z));
+                probePositions.Add (center + new Vector3 (-extents.x, -extents.y, -extents.z));
+                probePositions.Add (center + new Vector3 (extents.x, -extents.y, -extents.z));
+                probePositions.Add (center + new Vector3 (-extents.x, extents.y, -extents.z));
+            }
+        }
+        return probePositions;
+    }
+
+    List<Vector3> GetAllProbePositions () {
+        var result = new List<Vector3> ();
+        if (generateWithGrids) {
+            result.AddRange (GetGridProbePositions ());
+        }
+        if (generateWithBounds) {
+            result.AddRange (GetBoundsProbePositions ());
+        }
+        return result;
+    }
+
     [ContextMenu ("Update Renderers in Volume")]
-    public void UpdateRenderersInVolume () {
-        renderersInVolume = FindRenderersInVolume ();
+    public void ClearLightProbeGroup () {
+        var group = GetComponent<LightProbeGroup> ();
+        group.probePositions = new Vector3[0];
+        EditorSceneManager.MarkSceneDirty (this.gameObject.scene);
+    }
+
+    [ContextMenu ("Update Renderers in Volume")]
+    public void UpdateBoundsInVolume () {
+        UpdateRendererListAndColliderList ();
     }
 
     [ContextMenu ("Build Light Probes")]
     public void BuildLightProbeGroup () {
         var group = GetComponent<LightProbeGroup> ();
-        group.probePositions = GetProbePositions ().ToArray ();
+        group.probePositions = GetAllProbePositions ().ToArray ();
         EditorSceneManager.MarkSceneDirty (this.gameObject.scene);
     }
 
     void OnDrawGizmosSelected () {
         Gizmos.color = VolumeColor;
-        Gizmos.matrix = transform.localToWorldMatrix;
-        Gizmos.DrawWireCube (offset, size);
+        Gizmos.DrawWireCube (transform.position + offset, size);
 
+        Gizmos.color = BoundsColor;
         if (renderersInVolume != null) {
-            Gizmos.color = BoundsColor;
-            Gizmos.matrix = Matrix4x4.identity;
             foreach (var renderer in renderersInVolume) {
                 var bounds = renderer.bounds;
-                Gizmos.DrawWireCube (bounds.center, (bounds.extents + new Vector3 (boundsExtent, boundsExtent, boundsExtent)) * 2f);
+                Gizmos.DrawWireCube (bounds.center, bounds.size + new Vector3 (boundsExtent, boundsExtent, boundsExtent) * 2f);
+            }
+        }
+        if (collidersInVolume != null) {
+            foreach (var collider in collidersInVolume) {
+                var bounds = collider.bounds;
+                Gizmos.DrawWireCube (bounds.center, bounds.size + new Vector3 (boundsExtent, boundsExtent, boundsExtent) * 2f);
             }
         }
 
-        var probePositions = GetProbePositions (true);
+        var probePositions = GetGridProbePositions (true);
         for (int i = 0; i < probePositions.Count; i++) {
             Gizmos.DrawIcon (probePositions[i], "NONE", false);
         }
