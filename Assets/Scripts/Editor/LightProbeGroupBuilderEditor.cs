@@ -12,8 +12,6 @@ public class LightProbeGroupBuilderEditor : Editor {
         var builder = (LightProbeGroupBuilder) target;
         GUI.enabled = false;
         EditorGUILayout.IntField ("Current Probe Number", builder.currentProbeNumber);
-        EditorGUILayout.IntField ("Current Renderer Number", builder.currentRendererNumber);
-        EditorGUILayout.IntField ("Current Collider Number", builder.currentColliderNumber);
 
         GUI.enabled = true;
         using (new EditorGUILayout.HorizontalScope ()) {

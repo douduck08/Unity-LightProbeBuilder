@@ -27,24 +27,21 @@ public class LightProbeGroupBuilder : MonoBehaviour {
     [SerializeField] bool useColliderBounds = false;
     [SerializeField] float boundsExtent = 0f;
 
+    [Header ("Terrain")]
+    [SerializeField] bool generateWithTerrain;
+    [SerializeField] float terrainOffset = 0.1f;
+    [SerializeField] Vector2Int terrainGrid = new Vector2Int (10, 10);
+
+    [Header ("Other Settings")]
+    [SerializeField] bool removeOutsideVolume = true;
+
     List<Renderer> renderersInVolume = new List<Renderer> ();
     List<Collider> collidersInVolume = new List<Collider> ();
+    List<Terrain> terrainsInVolume = new List<Terrain> ();
 
     public int currentProbeNumber {
         get {
             return GetComponent<LightProbeGroup> ().probePositions.Length;
-        }
-    }
-
-    public int currentRendererNumber {
-        get {
-            return renderersInVolume.Count;
-        }
-    }
-
-    public int currentColliderNumber {
-        get {
-            return collidersInVolume.Count;
         }
     }
 
@@ -90,7 +87,28 @@ public class LightProbeGroupBuilder : MonoBehaviour {
         return result;
     }
 
-    void UpdateRendererListAndColliderList () {
+    List<Terrain> FindTerrainsInVolume () {
+        var terrainsInScene = FindObjectsOfType<GameObject> ()
+            .Where (go => (GameObjectUtility.GetStaticEditorFlags (go) & StaticEditorFlags.LightmapStatic) != 0)
+            .Select (go => go.GetComponent<Terrain> ())
+            .Where (c => c != null)
+            .ToList ();
+
+        var volumeBounds = new Bounds (transform.position + offset, size);
+        var result = new List<Terrain> ();
+        terrainsInScene.ForEach (
+            t => {
+                var bounds = new Bounds (t.transform.TransformPoint (t.terrainData.bounds.center), t.terrainData.bounds.size);
+                bounds.size = bounds.size + new Vector3 (boundsExtent, boundsExtent, boundsExtent) * 2f;
+                if (bounds.Intersects (volumeBounds)) {
+                    result.Add (t);
+                }
+            }
+        );
+        return result;
+    }
+
+    void UpdateComponentLists () {
         if (useRendererBounds) {
             renderersInVolume = FindRenderersInVolume ();
         } else {
@@ -100,6 +118,11 @@ public class LightProbeGroupBuilder : MonoBehaviour {
             collidersInVolume = FindCollidersInVolume ();
         } else {
             collidersInVolume.Clear ();
+        }
+        if (generateWithTerrain) {
+            terrainsInVolume = FindTerrainsInVolume ();
+        } else {
+            terrainsInVolume.Clear ();
         }
     }
 
@@ -123,7 +146,7 @@ public class LightProbeGroupBuilder : MonoBehaviour {
     }
 
     List<Vector3> GetBoundsProbePositions () {
-        UpdateRendererListAndColliderList ();
+        UpdateComponentLists ();
         var probePositions = new List<Vector3> ();
         if (renderersInVolume != null) {
             foreach (var renderer in renderersInVolume) {
@@ -158,6 +181,31 @@ public class LightProbeGroupBuilder : MonoBehaviour {
         return probePositions;
     }
 
+    List<Vector3> GetTerrainProbePositions () {
+        var probePositions = new List<Vector3> ();
+        if (terrainsInVolume != null) {
+            if (terrainGrid.x > 1 && terrainGrid.y > 1) {
+                foreach (var terrain in terrainsInVolume) {
+                    var terrainSize = terrain.terrainData.size;
+                    var gridSize = new Vector2 (terrainSize.x / (terrainGrid.x + 1), terrainSize.z / (terrainGrid.y + 1));
+                    var raycastHit = new RaycastHit ();
+                    for (int x = 0; x < terrainGrid.x; x++) {
+                        for (int y = 0; y < terrainGrid.y; y++) {
+                            var pos = new Vector3 (gridSize.x * (x + 1), terrainSize.y + 10f, gridSize.y * (y + 1));
+                            pos = terrain.transform.TransformPoint (pos);
+                            var collider = terrain.GetComponent<TerrainCollider> ();
+                            if (collider.Raycast (new Ray (pos, Vector3.down), out raycastHit, terrainSize.y + 20f)) {
+                                probePositions.Add (raycastHit.point + new Vector3 (0, terrainOffset, 0));
+                            }
+
+                        }
+                    }
+                }
+            }
+        }
+        return probePositions;
+    }
+
     List<Vector3> GetAllProbePositions () {
         var result = new List<Vector3> ();
         if (generateWithGrids) {
@@ -165,6 +213,13 @@ public class LightProbeGroupBuilder : MonoBehaviour {
         }
         if (generateWithBounds) {
             result.AddRange (GetBoundsProbePositions ());
+        }
+        if (generateWithTerrain) {
+            result.AddRange (GetTerrainProbePositions ());
+        }
+        if (removeOutsideVolume) {
+            var volumeBounds = new Bounds (transform.position + offset, size);
+            result = result.Where (p => volumeBounds.Contains (p)).ToList ();
         }
         return result;
     }
@@ -178,7 +233,7 @@ public class LightProbeGroupBuilder : MonoBehaviour {
 
     [ContextMenu ("Update Renderers in Volume")]
     public void UpdateBoundsInVolume () {
-        UpdateRendererListAndColliderList ();
+        UpdateComponentLists ();
     }
 
     [ContextMenu ("Build Light Probes")]
